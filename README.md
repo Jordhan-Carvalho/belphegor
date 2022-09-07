@@ -1,4 +1,4 @@
-# ALDEBARAN
+# BELPHEGOR
 
 ![Belphegor](dev_assets/belphegor.png?raw=true "Belphegor")
 
