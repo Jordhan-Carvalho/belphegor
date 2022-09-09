@@ -1,17 +1,22 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 var token string
+var buffer = make([][]byte, 0)
 
 func init() {
 	// This will get the value passed to the program on the flag -t to the token variable
@@ -22,6 +27,20 @@ func init() {
 func main() {
 	if token == "" {
 		fmt.Printf("You need to pass the token, please run ./belphegor -t <token value>")
+		return
+	}
+
+  // Iterate thru sounds files
+  /* items, _ := ioutil.ReadDir("./sounds/")
+  fmt.Println("Items", items)
+  fmt.Printf("Found %d items\n", len(items))
+  fmt.Printf(("Item 0: %v\n"), items[0].Name())
+  return */
+	// Load the sound file.
+	err := loadSound()
+	if err != nil {
+		fmt.Println("Error loading sound: ", err)
+		fmt.Println("Please copy a file.dca to this directory.")
 		return
 	}
 
@@ -56,13 +75,56 @@ func main() {
 	discord.Close()
 }
 
+// loadSound attempts to load an encoded sound file from disk.
+func loadSound() error {
+	file, err := os.Open("./sounds/runa.dca")
+
+	if err != nil {
+		fmt.Println("Something went worng opening audio file:", err)
+		return err
+	}
+
+	var opuslen int16
+
+	for {
+		// Read opus frame length from dca file.
+		err = binary.Read(file, binary.LittleEndian, &opuslen)
+
+		// If this is the end of the file, just return.
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			err := file.Close()
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+
+		if err != nil {
+			fmt.Println("Error reading from dca file :", err)
+			return err
+		}
+
+		// Read encoded pcm from dca file.
+		InBuf := make([]byte, opuslen)
+		err = binary.Read(file, binary.LittleEndian, &InBuf)
+
+		// Should not be any end of file errors
+		if err != nil {
+			fmt.Println("Error reading from dca file :", err)
+			return err
+		}
+
+		// Append encoded pcm data to the buffer.
+		buffer = append(buffer, InBuf)
+	}
+}
+
 // This function will be called (due to AddHandler above) every time a new
 // message is created on any channel that the authenticated bot has access to.
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Ignore all messages created by the bot itself
 	// This isn't required in this specific example but it's a good practice.
 	if m.Author.ID == s.State.User.ID {
-		fmt.Println("Nao eh pra entrar")
 		return
 	}
 
@@ -89,4 +151,66 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			fmt.Println("Error: Can't get random quote! :-(")
 		}
 	}
+
+	if m.Content == "!aipapai" {
+		fmt.Println("Checking the channel", m.ChannelID)
+		// Find the channel that the message came from.
+		c, err := s.State.Channel(m.ChannelID)
+		if err != nil {
+			// Could not find channel.
+			return
+		}
+
+		fmt.Println("Checking guild", c.GuildID)
+		// Find the guild for that channel.
+		g, err := s.State.Guild(c.GuildID)
+		if err != nil {
+			// Could not find guild.
+			return
+		}
+
+		// Look for the message sender in that guild's current voice states.
+		for _, vs := range g.VoiceStates {
+			if vs.UserID == m.Author.ID {
+				err = playSound(s, g.ID, vs.ChannelID)
+				if err != nil {
+					fmt.Println("Error playing sound:", err)
+				}
+
+				return
+			}
+		}
+	}
+}
+
+// playSound plays the current buffer to the provided channel.
+func playSound(s *discordgo.Session, guildID, channelID string) (err error) {
+
+	// Join the provided voice channel.
+	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
+	if err != nil {
+		return err
+	}
+
+	// Sleep for a specified amount of time before playing the sound
+	time.Sleep(250 * time.Millisecond)
+
+	// Start speaking.
+	vc.Speaking(true)
+
+	// Send the buffer data.
+	for _, buff := range buffer {
+		vc.OpusSend <- buff
+	}
+
+	// Stop speaking
+	vc.Speaking(false)
+
+	// Sleep for a specificed amount of time before ending.
+	time.Sleep(250 * time.Millisecond)
+
+	// Disconnect from the provided voice channel.
+	vc.Disconnect()
+
+	return nil
 }
