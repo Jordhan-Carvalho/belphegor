@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -18,6 +18,12 @@ import (
 var token string
 var buffer = make([][]byte, 0)
 var soundsBuffers = make(map[string][][]byte)
+
+var stackTime = 5
+var bountyRunesTime = 180
+var riverRunesTime = 120
+var gameTime = 0
+var gameDone = make(chan bool)
 
 func init() {
 	// This will get the value passed to the program on the flag -t to the token variable
@@ -41,10 +47,8 @@ func main() {
 	}
 
 	createSoundsBufferMap()
-	fmt.Println("soundsBuffers", soundsBuffers)
 	// Iterate through the
 	for key, value := range soundsBuffers {
-		fmt.Println("Loading sound key value", key, value)
 		err := loadSound(value, key, soundsBuffers)
 		if err != nil {
 			fmt.Println("Error loading sound: ", err)
@@ -80,8 +84,9 @@ func main() {
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
 	<-sc
 
-	// Cleanly close down the Discord session.
+	// Cleanly close down the Discord session and ticker.
 	discord.Close()
+
 }
 
 // loadSound attempts to load an encoded sound file from disk.
@@ -125,7 +130,7 @@ func loadSound(sBuffer [][]byte, sName string, soundsBuffers map[string][][]byte
 
 		// Append encoded pcm data to the buffer.
 		sBuffer = append(sBuffer, InBuf)
-    soundsBuffers[sName] = sBuffer
+		soundsBuffers[sName] = sBuffer
 	}
 }
 
@@ -138,51 +143,24 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	randomQuoteApiBaseUrl := "https://api.quotable.io"
 	fmt.Println("Content value" + m.Content)
 
-	if m.Content == "!diegoBaitola" {
-		//Call the quote API and retrieve a random quote
-		response, err := http.Get(randomQuoteApiBaseUrl + "/random/")
-
-		if err != nil {
-			fmt.Println(err)
-		}
-
-		defer response.Body.Close()
-
-		if response.StatusCode == 200 {
-			_, err := s.ChannelMessageSend(m.ChannelID, "testing")
-			// _, err = s.ChannelFileSend(m.ChannelID, "random-gopher.png", response.Body)
-			if err != nil {
-				fmt.Println(err)
-			}
-		} else {
-			fmt.Println("Error: Can't get random quote! :-(")
-		}
-	}
-
-	if m.Content == "!aipapai" {
-		fmt.Println("Checking the channel", m.ChannelID)
-		// Find the channel that the message came from.
-		c, err := s.State.Channel(m.ChannelID)
-		if err != nil {
-			// Could not find channel.
-			return
-		}
-
-		fmt.Println("Checking guild", c.GuildID)
-		// Find the guild for that channel.
-		g, err := s.State.Guild(c.GuildID)
-		if err != nil {
-			// Could not find guild.
-			return
-		}
+	if m.Content == "!start" {
+		_, g, _ := getChannelAndGuild(s, m)
 
 		// Look for the message sender in that guild's current voice states.
 		for _, vs := range g.VoiceStates {
 			if vs.UserID == m.Author.ID {
-				err = playSound(s, g.ID, vs.ChannelID, soundsBuffers["diego.dca"])
+				// Join the provided voice channel.
+				vc, err := s.ChannelVoiceJoin(g.ID, vs.ChannelID, false, true)
+				if err != nil {
+					fmt.Println("Error joining channel: ", err)
+					return
+				}
+
+				ticker := time.NewTicker(1 * time.Second)
+				playSpecificSound(vc, soundsBuffers["diego.dca"])
+				go startGame(ticker, &gameTime, vc)
 				if err != nil {
 					fmt.Println("Error playing sound:", err)
 				}
@@ -191,6 +169,51 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			}
 		}
 	}
+
+	if m.Content == "!time" {
+		message := strconv.Itoa(gameTime) + " Seconds"
+		_, err := s.ChannelMessageSend(m.ChannelID, message)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+
+	if m.Content == "!quit" {
+		_, g, _ := getChannelAndGuild(s, m)
+
+		for _, vs := range g.VoiceStates {
+			if vs.UserID == m.Author.ID {
+				// Join the provided voice channel.
+				vc, err := s.ChannelVoiceJoin(g.ID, vs.ChannelID, false, true)
+				if err != nil {
+					fmt.Println("Error joining channel: ", err)
+					return
+				}
+
+				vc.Disconnect()
+				//TODO should also quit the timer
+			}
+		}
+	}
+}
+
+func playSpecificSound(vc *discordgo.VoiceConnection, audioBuffers [][]byte) {
+	// Sleep for a specified amount of time before playing the sound
+	time.Sleep(250 * time.Millisecond)
+
+	// Start speaking.
+	vc.Speaking(true)
+
+	// Send the buffer data.
+	for _, buff := range audioBuffers {
+		vc.OpusSend <- buff
+	}
+
+	// Stop speaking
+	vc.Speaking(false)
+
+	// Sleep for a specificed amount of time before ending.
+	time.Sleep(250 * time.Millisecond)
 }
 
 // playSound plays the current buffer to the provided channel.
@@ -223,4 +246,45 @@ func playSound(s *discordgo.Session, guildID, channelID string, sBuffer [][]byte
 	vc.Disconnect()
 
 	return nil
+}
+
+// Routine to be called when the game started
+func startGame(ticker *time.Ticker, gameTime *int, vc *discordgo.VoiceConnection) {
+	for {
+		select {
+		case <-gameDone:
+			return
+		case <-ticker.C:
+			*gameTime += 1
+			fmt.Println("Game time", *gameTime)
+
+			if *gameTime%stackTime == 0 {
+				playSpecificSound(vc, soundsBuffers["stack.dca"])
+			}
+
+			if *gameTime%bountyRunesTime == 0 {
+				playSpecificSound(vc, soundsBuffers["runa.dca"])
+			}
+
+		}
+	}
+}
+
+// Get the channel and guild that the message is coming from
+func getChannelAndGuild(s *discordgo.Session, m *discordgo.MessageCreate) (c *discordgo.Channel, g *discordgo.Guild, err error) {
+	// Find the channel that the message came from.
+	c, err = s.State.Channel(m.ChannelID)
+	if err != nil {
+		// Could not find channel.
+		return
+	}
+
+	// Find the guild for that channel.
+	g, err = s.State.Guild(c.GuildID)
+	if err != nil {
+		// Could not find guild.
+		return
+	}
+
+	return
 }
