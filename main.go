@@ -17,11 +17,21 @@ import (
 
 var token string
 var buffer = make([][]byte, 0)
+var soundsBuffers = make(map[string][][]byte)
 
 func init() {
 	// This will get the value passed to the program on the flag -t to the token variable
 	flag.StringVar(&token, "t", "", "Bot Token")
 	flag.Parse()
+}
+
+func createSoundsBufferMap() {
+	items, _ := ioutil.ReadDir("./sounds/")
+	fmt.Printf("Found %d sounds\n", len(items))
+
+	for _, soundItem := range items {
+		soundsBuffers[soundItem.Name()] = make([][]byte, 0)
+	}
 }
 
 func main() {
@@ -30,18 +40,17 @@ func main() {
 		return
 	}
 
-  // Iterate thru sounds files
-  /* items, _ := ioutil.ReadDir("./sounds/")
-  fmt.Println("Items", items)
-  fmt.Printf("Found %d items\n", len(items))
-  fmt.Printf(("Item 0: %v\n"), items[0].Name())
-  return */
-	// Load the sound file.
-	err := loadSound()
-	if err != nil {
-		fmt.Println("Error loading sound: ", err)
-		fmt.Println("Please copy a file.dca to this directory.")
-		return
+	createSoundsBufferMap()
+	fmt.Println("soundsBuffers", soundsBuffers)
+	// Iterate through the
+	for key, value := range soundsBuffers {
+		fmt.Println("Loading sound key value", key, value)
+		err := loadSound(value, key, soundsBuffers)
+		if err != nil {
+			fmt.Println("Error loading sound: ", err)
+			fmt.Println("Please copy a file.dca to this directory.")
+			return
+		}
 	}
 
 	discord, err := discordgo.New("Bot " + token)
@@ -76,8 +85,8 @@ func main() {
 }
 
 // loadSound attempts to load an encoded sound file from disk.
-func loadSound() error {
-	file, err := os.Open("./sounds/runa.dca")
+func loadSound(sBuffer [][]byte, sName string, soundsBuffers map[string][][]byte) error {
+	file, err := os.Open("./sounds/" + sName)
 
 	if err != nil {
 		fmt.Println("Something went worng opening audio file:", err)
@@ -115,7 +124,8 @@ func loadSound() error {
 		}
 
 		// Append encoded pcm data to the buffer.
-		buffer = append(buffer, InBuf)
+		sBuffer = append(sBuffer, InBuf)
+    soundsBuffers[sName] = sBuffer
 	}
 }
 
@@ -172,7 +182,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Look for the message sender in that guild's current voice states.
 		for _, vs := range g.VoiceStates {
 			if vs.UserID == m.Author.ID {
-				err = playSound(s, g.ID, vs.ChannelID)
+				err = playSound(s, g.ID, vs.ChannelID, soundsBuffers["diego.dca"])
 				if err != nil {
 					fmt.Println("Error playing sound:", err)
 				}
@@ -184,7 +194,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 // playSound plays the current buffer to the provided channel.
-func playSound(s *discordgo.Session, guildID, channelID string) (err error) {
+func playSound(s *discordgo.Session, guildID, channelID string, sBuffer [][]byte) (err error) {
 
 	// Join the provided voice channel.
 	vc, err := s.ChannelVoiceJoin(guildID, channelID, false, true)
@@ -199,7 +209,7 @@ func playSound(s *discordgo.Session, guildID, channelID string) (err error) {
 	vc.Speaking(true)
 
 	// Send the buffer data.
-	for _, buff := range buffer {
+	for _, buff := range sBuffer {
 		vc.OpusSend <- buff
 	}
 
