@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,9 +20,9 @@ var token string
 var buffer = make([][]byte, 0)
 var soundsBuffers = make(map[string][][]byte)
 
-var stackTime = 5
-var bountyRunesTime = 180
-var riverRunesTime = 120
+var stackTime = 46        //49
+var bountyRunesTime = 170 //180
+var riverRunesTime = 110  // 120
 var gameTime = 0
 var gameDone = make(chan bool)
 
@@ -84,7 +85,7 @@ func main() {
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
 	<-sc
 
-	// Cleanly close down the Discord session and ticker.
+	// Cleanly close down the Discord session.
 	discord.Close()
 
 }
@@ -143,7 +144,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	fmt.Println("Content value" + m.Content)
+	ticker := time.NewTicker(1 * time.Second)
 
 	if m.Content == "!start" {
 		_, g, _ := getChannelAndGuild(s, m)
@@ -158,7 +159,6 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 					return
 				}
 
-				ticker := time.NewTicker(1 * time.Second)
 				playSpecificSound(vc, soundsBuffers["diego.dca"])
 				go startGame(ticker, &gameTime, vc)
 				if err != nil {
@@ -171,10 +171,29 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 
 	if m.Content == "!time" {
-		message := strconv.Itoa(gameTime) + " Seconds"
-		_, err := s.ChannelMessageSend(m.ChannelID, message)
+		// message := strconv.Itoa(gameTime) + " Seconds"
+		message2 := secondsToMinutes(gameTime)
+
+		_, err := s.ChannelMessageSend(m.ChannelID, message2)
 		if err != nil {
 			fmt.Println(err)
+		}
+	}
+
+	if m.Content == "!rita" {
+		_, g, _ := getChannelAndGuild(s, m)
+
+		for _, vs := range g.VoiceStates {
+			if vs.UserID == m.Author.ID {
+				// Join the provided voice channel.
+				vc, err := s.ChannelVoiceJoin(g.ID, vs.ChannelID, false, true)
+				if err != nil {
+					fmt.Println("Error joining channel: ", err)
+					return
+				}
+
+				playSpecificSound(vc, soundsBuffers["rita.dca"])
+			}
 		}
 	}
 
@@ -191,9 +210,27 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 				}
 
 				vc.Disconnect()
-				//TODO should also quit the timer
+				ticker.Stop()
+				gameDone <- true
+				gameTime = 0
 			}
 		}
+	}
+
+	// Add time(seconds) to the game time
+	if strings.HasPrefix(m.Content, "!add") {
+		words := strings.Fields(m.Content)
+		secondsToAdd := words[1]
+		i, _ := strconv.Atoi(secondsToAdd)
+		gameTime += i
+	}
+
+	// Subtract time (seconds) from the game time
+	if strings.HasPrefix(m.Content, "!remove") {
+		words := strings.Fields(m.Content)
+		secondsToAdd := words[1]
+		i, _ := strconv.Atoi(secondsToAdd)
+		gameTime -= i
 	}
 }
 
@@ -266,6 +303,10 @@ func startGame(ticker *time.Ticker, gameTime *int, vc *discordgo.VoiceConnection
 				playSpecificSound(vc, soundsBuffers["runa.dca"])
 			}
 
+     if *gameTime%riverRunesTime == 0 {
+      playSpecificSound(vc, soundsBuffers["runa.dca"])
+    }
+
 		}
 	}
 }
@@ -287,4 +328,11 @@ func getChannelAndGuild(s *discordgo.Session, m *discordgo.MessageCreate) (c *di
 	}
 
 	return
+}
+
+func secondsToMinutes(inSeconds int) string {
+	minutes := inSeconds / 60
+	seconds := inSeconds % 60
+  str2 := fmt.Sprintf("%02d:%02d\n", minutes, seconds)
+	return str2
 }
