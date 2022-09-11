@@ -194,7 +194,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 					return
 				}
 
-				playSpecificSound(vc, soundsBuffers["rita.dca"])
+				go playSpecificSound(vc, soundsBuffers["rita.dca"])
 			}
 		}
 	}
@@ -215,6 +215,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 				ticker.Stop()
 				gameDone <- true
 				gameTime = 0
+        fmt.Println("Game ended")
 			}
 		}
 	}
@@ -289,13 +290,14 @@ func playSound(s *discordgo.Session, guildID, channelID string, sBuffer [][]byte
 
 // Routine to be called when the game started
 func startGame(ticker *time.Ticker, gameTime *int, vc *discordgo.VoiceConnection) {
+  fmt.Println("Game started")
 	for {
 		select {
 		case <-gameDone:
 			return
 		case <-ticker.C:
 			*gameTime += 1
-			fmt.Println("Game time", *gameTime)
+			// fmt.Println("Game time", *gameTime)
 
 			if (*gameTime-stackTime)%stackDelay == 0 {
       // TODO: This will block the tick execution, should own it own thread
