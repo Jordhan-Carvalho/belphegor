@@ -20,8 +20,10 @@ var token string
 var buffer = make([][]byte, 0)
 var soundsBuffers = make(map[string][][]byte)
 
-var stackTime = 46        //49
-var bountyRunesTime = 170 //180
+var stackTime = 49        // ingame time to stack
+var stackDelay = 60  // interval between stack
+var bountyRunesTime = 173 //180
+var bountyRunesDelay = 180
 var riverRunesTime = 110  // 120
 var gameTime = 0
 var gameDone = make(chan bool)
@@ -295,17 +297,14 @@ func startGame(ticker *time.Ticker, gameTime *int, vc *discordgo.VoiceConnection
 			*gameTime += 1
 			fmt.Println("Game time", *gameTime)
 
-			if *gameTime%stackTime == 0 {
-				playSpecificSound(vc, soundsBuffers["stack.dca"])
+			if (*gameTime-stackTime)%stackDelay == 0 {
+      // TODO: This will block the tick execution, should own it own thread
+				go playSpecificSound(vc, soundsBuffers["stack.dca"])
 			}
 
-			if *gameTime%bountyRunesTime == 0 {
-				playSpecificSound(vc, soundsBuffers["runa.dca"])
+			if (*gameTime-bountyRunesTime)%bountyRunesDelay == 0 {
+				go playSpecificSound(vc, soundsBuffers["runa.dca"])
 			}
-
-     if *gameTime%riverRunesTime == 0 {
-      playSpecificSound(vc, soundsBuffers["runa.dca"])
-    }
 
 		}
 	}
